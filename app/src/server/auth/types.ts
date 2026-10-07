@@ -8,6 +8,7 @@ export type AuthErrorCode =
   | "weak_password"
   | "invalid_email"
   | "unavailable" // 通信失敗・基盤の一時的な不調
+  | "invalid_token" // トークンが無効・期限切れ・失効済み
   | "not_configured" // 接続先が未設定
   | "unexpected";
 
@@ -29,7 +30,10 @@ export interface AuthProvider {
   verify(accessToken: string): Promise<AuthUser | null>;
   /** リフレッシュトークンから新しいトークンを得る。失敗は null */
   refresh(refreshToken: string): Promise<AuthResult | null>;
-  /** そのセッションを失効させる */
+  /**
+   * 利用者の全セッションを失効させる（全端末からのログアウト。SPEC-000c A-8。端末を相手に見られた場合に、別の端末から全部を切れるほうが安全側）。
+   * アクセストークンが無効・期限切れなら AuthError("invalid_token") を投げる（本物の Supabase Auth と同じ）。呼び出し側は更新してから再度呼ぶ。
+   */
   signOut(accessToken: string): Promise<void>;
   /** 認証基盤上のアカウントを削除する */
   deleteUser(userId: string): Promise<void>;

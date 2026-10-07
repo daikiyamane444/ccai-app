@@ -5,7 +5,7 @@ import { deleteAuthUser, revokeAuthSession } from "../privileged";
 
 /**
  * Supabase Auth のアダプタ。サーバー側だけで使う（ブラウザには SDK を一切送らない。AC-8）。
- * 注意: 本物の Supabase Auth との結合は自動テストの対象外（ローカルに本物がないため）。SPEC-000c の確認項目（docs/architecture.md）。
+ * 注意: 本物の Supabase Auth との結合は自動テスト（npm test）の対象外。SPEC-000c の結合テスト（GitHub Actions。app/tests/integration/）で確かめる。
  */
 function client() {
   const cfg = supabaseAuthConfig();
@@ -62,7 +62,11 @@ export const supabaseAuth: AuthProvider = {
     return toResult(data.user, data.session);
   },
   async signOut(accessToken) {
-    await revokeAuthSession(accessToken);
+    const r = await revokeAuthSession(accessToken);
+    if (r.ok) return;
+    // 通信失敗・基盤の不調と、トークンの問題（期限切れ・失効済み・不正）を分ける。後者は呼び出し側が更新してからやり直す
+    if (r.status === 0 || r.status >= 500) throw new AuthError("unavailable");
+    throw new AuthError("invalid_token", r.code);
   },
   async deleteUser(userId) {
     await deleteAuthUser(userId);

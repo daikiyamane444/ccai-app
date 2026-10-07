@@ -31,10 +31,20 @@ npm run dev                  # http://localhost:3000
 ```
 
 - **接続先なし（.env.local なし）でも、ログイン画面・登録画面は表示される。** 登録・ログインを押すと「接続先が設定されていません」と出る
-- ログインまで動かすには `.env.local` に次を入れる: `SUPABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY`、`DATABASE_URL`、そして Supabase に `supabase/migrations/` の SQL を適用しておく
+- ログインまで動かすには `.env.local` に次を入れる: `SUPABASE_URL`、`SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY`、DB の接続情報（`DB_HOST`＋`DB_PASSWORD`、または `DATABASE_URL`）、**`SIGNUP_ALLOWED_EMAILS`（登録を許すメールアドレス。空だと登録は全部断られる）**。Supabase に `supabase/migrations/` の SQL を順番に適用し、`supabase/manual/set-app-role-password.sql` でアプリ用ロールのパスワードを作っておく
 - 環境変数の一覧と意味は `.env.example`。**管理用キー（`SUPABASE_SERVICE_ROLE_KEY`）をブラウザに出さない・git に入れない**
 - 本番相当のビルド: `npm run build && npm start`
 - アイコンの再生成（仮のアイコン）: `npm run gen:icons`
+
+## 個人用公開（SPEC-000c）とデプロイ
+
+- **手順書**: 非エンジニア向けのブラウザだけの手順は `docs/runbooks/deploy-personal.md`（GitHub → Supabase 東京 → Vercel 東京。すべて無料プラン）。このREADMEは開発者向けの要点だけ
+- **Vercel**: Root Directory は `app`。関数の実行地域は `vercel.json`（`hnd1` = 東京。Hobby は1地域だけ）。環境変数はサーバー側のものだけ（`NEXT_PUBLIC_` は作らない。テストが確かめる）
+- **新規登録の限定**: `SIGNUP_ALLOWED_EMAILS`（カンマ区切り。大文字小文字・前後の空白は無視）にあるアドレスだけ登録できる。空・未設定なら全部断る（fail closed。ログインは使える）。一覧にないアドレスは、認証基盤に送る前に固定文「現在、新規登録を受け付けていません」で断る
+- **DB 接続（最小権限）**: アプリはロール `ccai_app`（テーブル権限なし、BYPASSRLS なし。`anon`／`authenticated`／`service_role` への SET ROLE だけ）で接続する。ロールは `supabase/migrations/20261008000001_app_role.sql`、パスワードは SQL に書かず `supabase/manual/set-app-role-password.sql` で作る。接続は `DB_HOST`／`DB_PASSWORD` の部品から組み立てる（Supabase のプーラーなら、ユーザー名に `.<プロジェクトID>` を自動で付け、ポートは 6543＝トランザクションモード。SSL は暗号化のみで証明書は検証しない）
+- **検索エンジン**: 全ページに `X-Robots-Tag: noindex`・`<meta name="robots">`、`public/robots.txt` で全拒否
+- **ログアウトは全端末**（`scope: global`）。アクセストークンが期限切れでも、更新してから失効させる（`src/server/handlers/index.ts` の `revokeAllSessions`）。PC でログアウトすると iPhone もログアウトされる
+- **結合テスト（本物の Supabase と公開URL）**: `app/tests/integration/`（`*.itest.ts`）。`npm test` には含まれない。GitHub Actions の手動起動のみ（`.github/workflows/integration.yml`。Actions タブ → Integration tests → Run workflow。`standard` は数分、`long` は期限切れトークンの確認で約70分、1回だけ）。必要な秘密は GitHub の Actions secrets（手順書の手順10）。ログに秘密・トークン・本人のメールアドレスを出さず、触るのは `ccai-ci+<実行ID>-<n>@example.invalid` 形のユーザーだけ。前後で、それ以外のユーザー数とプロフィール・所属の件数を比べる。ローカルで流す場合も、同じ環境変数（`.env.example` の結合テスト用の項目）を設定して `npm run test:integration`
 
 ## 仕組みの要点
 

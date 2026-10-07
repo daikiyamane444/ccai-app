@@ -1,0 +1,88 @@
+# SPEC-000c 結合テスト（本物の Supabase と公開URLに対して流す）。
+# 手動起動のみ（Actions タブ → Integration tests → Run workflow）。push や pull request では動かない。
+# 秘密情報は Settings → Secrets and variables → Actions に人間が入力する。この定義にも、ログにも、値を出さない。
+# Postgres の管理者（postgres）のパスワードは渡さない。DB へはアプリ用ロール ccai_app（DB_PASSWORD）で接続する。
+name: Integration tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "standard = 通常の結合テスト（数分）／ long = 期限切れトークンの確認（約70分。1回だけ）"
+        type: choice
+        options:
+          - standard
+          - long
+        default: standard
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration
+  cancel-in-progress: false
+
+jobs:
+  standard:
+    if: ${{ inputs.job == 'standard' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      # 自動テスト（.env なし）も先に通す。結合テストの失敗が、コードの問題か環境の問題かを切り分けるため
+      - run: npm test
+      # 秘密情報は、このステップと後片付けのステップにだけ渡す（npm ci・npm test には渡さない）
+      - run: npm run test:integration
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          CI_SITE_URL: ${{ secrets.CI_SITE_URL }}
+          CI_LEAK_PROBE: ${{ secrets.CI_LEAK_PROBE }}
+          CI_RUN_ID: ${{ github.run_id }}
+      # タイムアウト・手動キャンセルのときも、テスト用ユーザー（決まった形のアドレスだけ）を消す
+      - run: npm run ci:cleanup
+        if: ${{ always() }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+  long:
+    if: ${{ inputs.job == 'long' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - run: npm run test:integration:long
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          CI_RUN_ID: ${{ github.run_id }}
+      - run: npm run ci:cleanup
+        if: ${{ always() }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

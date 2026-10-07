@@ -5,6 +5,7 @@ import { createProfile } from "@/server/db/profile";
 import { createPairForTest } from "@/server/privileged";
 import { deleteAccount, registerUser } from "@/server/services/account";
 import { createAuthUser, createTestDb, insertProfile, type TestDb } from "./helpers/db";
+import { openSignup } from "./helpers/app";
 
 describe("ユーザー単位の全データ削除", () => {
   let t: TestDb;
@@ -28,7 +29,7 @@ describe("ユーザー単位の全データ削除", () => {
 
   it("アカウント・プロフィール・pair の所属が消え、他のユーザー（連携相手を含む）のデータは変わらない", async () => {
     const auth = new FakeAuth({ mirror: t.mirror });
-    const deps = { auth, db: t.db };
+    const deps = { auth, db: t.db, signup: openSignup };
     // 実際の登録の流れでAを作る（認証基盤のアカウント＋プロフィール）
     const reg = await registerUser(deps, { email: "a@example.test", password: "password-a-1", displayName: "A", ageConfirmed: true });
     expect(reg.ok).toBe(true);
@@ -57,7 +58,7 @@ describe("ユーザー単位の全データ削除", () => {
     const auth = new FakeAuth({ mirror: t.mirror });
     const u = await createAuthUser(t);
     const pairId = await createPairForTest(t.db, [u]);
-    await deleteAccount({ auth, db: t.db }, u);
+    await deleteAccount({ auth, db: t.db, signup: openSignup }, u);
     expect((await t.admin.query("SELECT 1 FROM public.pairs WHERE id = $1", [pairId])).rowCount).toBe(0);
   });
 
@@ -75,8 +76,8 @@ describe("ユーザー単位の全データ削除", () => {
     const auth = new FakeAuth({ mirror: t.mirror });
     const u = await createAuthUser(t);
     await insertProfile(t, u);
-    await deleteAccount({ auth, db: t.db }, u);
-    await expect(deleteAccount({ auth, db: t.db }, u)).resolves.toBeUndefined();
+    await deleteAccount({ auth, db: t.db, signup: openSignup }, u);
+    await expect(deleteAccount({ auth, db: t.db, signup: openSignup }, u)).resolves.toBeUndefined();
   });
 
   it("createProfile は本人の権限で作る（他人のIDでは作れない）", async () => {

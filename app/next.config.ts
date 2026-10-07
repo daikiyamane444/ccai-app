@@ -6,6 +6,8 @@ const common = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "same-origin" },
   { key: "X-Frame-Options", value: "DENY" },
+  // 個人用URL。検索エンジンに載せない（SPEC-000c AC-7）。robots.txt（public/）と、各ページの meta robots（layout.tsx）も併用する
+  { key: "X-Robots-Tag", value: "noindex, nofollow, noarchive" },
 ];
 
 const nextConfig: NextConfig = {

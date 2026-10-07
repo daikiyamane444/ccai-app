@@ -49,18 +49,34 @@ export async function handleLogin(req: Request, deps: Deps): Promise<Response> {
   return json({ ok: true }, 200, sessionCookieHeader(r.tokens));
 }
 
+/**
+ * 全端末のセッションを失効させる。アクセストークンが期限切れだと失効の要求が拒否されるため（SPEC-000c A-1）、
+ * その場合はリフレッシュトークンで更新してから、新しいアクセストークンで失効させる。
+ * 返り値: 失効できた（または、もともと使えない状態だった）なら true。通信失敗などで確認できなかったら false。
+ */
+async function revokeAllSessions(deps: Deps, tokens: { accessToken: string; refreshToken: string }): Promise<boolean> {
+  try {
+    await deps.auth.signOut(tokens.accessToken);
+    return true;
+  } catch {
+    /* 期限切れなどの可能性。更新してからやり直す */
+  }
+  try {
+    const renewed = await deps.auth.refresh(tokens.refreshToken);
+    if (!renewed) return true; // 更新できない＝もともとそのセッションは使えない
+    await deps.auth.signOut(renewed.tokens.accessToken);
+    return true;
+  } catch (e) {
+    // 種類だけ記録し、トークンは出さない
+    console.error("logout: session revoke failed", e instanceof AuthError ? e.code : "error");
+    return false;
+  }
+}
+
 export async function handleLogout(req: Request, deps: Deps): Promise<Response> {
   const tokens = decodeSession(readCookie(req.headers.get("cookie"), SESSION_COOKIE));
-  let revoked = true;
-  if (tokens) {
-    try {
-      await deps.auth.signOut(tokens.accessToken);
-    } catch (e) {
-      // 失効に失敗しても cookie は消す（共有端末で利用者が閉じ込められないように）。種類だけ記録し、トークンは出さない
-      revoked = false;
-      console.error("logout: session revoke failed", e instanceof AuthError ? e.code : "error");
-    }
-  }
+  // 失効に失敗しても cookie は消す（共有端末で利用者が閉じ込められないように）
+  const revoked = tokens ? await revokeAllSessions(deps, tokens) : true;
   return json({ ok: true, revoked }, 200, clearSessionCookieHeader());
 }
 

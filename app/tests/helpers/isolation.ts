@@ -34,13 +34,18 @@ async function run<T>(t: TestDb, who: Who, actingUser: string | undefined, fn: (
   return who === "anon" ? asAnon(t.db, fn) : asUser(t.db, actingUser!, fn);
 }
 
-/** 拒否（権限エラー）または 0 件のどちらでも「できなかった」とみなす */
-async function deniedOrEmpty(p: Promise<{ rowCount: number | null; rows: unknown[] }>): Promise<number> {
+/**
+ * 拒否（権限エラー）または 0 件のどちらでも「できなかった」とみなす。
+ * 拒否と認めるのは、権限エラー（SQLSTATE 42501。行レベルセキュリティによる拒否もこれ）だけ。
+ * 外部キー違反（23503）・CHECK 違反（23514）・一意制約（23505）などは、分離が効いた結果ではないので、そのまま失敗にする（SPEC-000c A-4）。
+ */
+export async function deniedOrEmpty(p: Promise<{ rowCount: number | null; rows: unknown[] }>): Promise<number> {
   try {
     const r = await p;
     return r.rowCount ?? r.rows.length;
   } catch (e) {
-    expect(String((e as Error).message)).toMatch(/permission denied|row-level security|violates/i);
+    const code = (e as { code?: string }).code;
+    if (code !== "42501") throw e;
     return 0;
   }
 }
@@ -105,6 +110,23 @@ export function defineIsolationTests(spec: IsolatedTable) {
           expect(n).toBe(0);
           const after = await t.admin.query(`SELECT * FROM ${spec.table} WHERE ${spec.idColumn} = $1`, [rowId]);
           expect(after.rows).toEqual(before.rows);
+        });
+
+        // WHERE なしの更新・削除でも、他人の行は変わらない（UPDATE / DELETE のポリシー単独の誤りを検出する。SPEC-000c A-3）
+        it("WHERE なしの UPDATE でも、A の行は変わらない", async () => {
+          const before = await t.admin.query(`SELECT * FROM ${spec.table} ORDER BY ${spec.idColumn}`);
+          await deniedOrEmpty(run(t, c.who, actor, (cl) => cl.query(`UPDATE ${spec.table} SET ${spec.update.set}`)));
+          const after = await t.admin.query(`SELECT * FROM ${spec.table} ORDER BY ${spec.idColumn}`);
+          expect(after.rows).toEqual(before.rows);
+        });
+
+        it("WHERE なしの DELETE でも、A の行は残る", async () => {
+          const before = await t.admin.query(`SELECT count(*)::int AS n FROM ${spec.table}`);
+          await deniedOrEmpty(run(t, c.who, actor, (cl) => cl.query(`DELETE FROM ${spec.table}`)));
+          const after = await t.admin.query(`SELECT count(*)::int AS n FROM ${spec.table}`);
+          expect(after.rows[0].n).toBe(before.rows[0].n);
+          const still = await t.admin.query(`SELECT 1 FROM ${spec.table} WHERE ${spec.idColumn} = $1`, [rowId]);
+          expect(still.rowCount).toBe(1);
         });
 
         it("削除できない（A の行は残る）", async () => {

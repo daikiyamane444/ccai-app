@@ -100,6 +100,8 @@ export default async function setup(project: TestProject) {
   for (const f of readdirSync(migDir).filter((n) => n.endsWith(".sql")).sort()) {
     await t.query(readFileSync(join(migDir, f), "utf8"));
   }
+  // アプリ用ロール（マイグレーションが作る。パスワードはSQLに書かない）にテスト用のパスワードを設定する
+  await t.query("ALTER ROLE ccai_app WITH PASSWORD 'ccai_test_app'");
   await t.end();
 
   project.provide("pgBaseUrl", base);

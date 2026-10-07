@@ -4,6 +4,9 @@ import { inject } from "vitest";
 import { createDb, type Db } from "@/server/db/pool";
 import type { AuthUser } from "@/server/auth";
 
+export const APP_ROLE = "ccai_app";
+export const APP_ROLE_PASSWORD = "ccai_test_app";
+
 export type TestDb = {
   /** アプリと同じ接続（アプリのコードはこれ経由で asUser / asAnon / 特権処理を使う） */
   db: Db;
@@ -22,7 +25,8 @@ export async function createTestDb(): Promise<TestDb> {
   await c.query(`CREATE DATABASE ${name} TEMPLATE ccai_template`);
   await c.end();
   const url = `${base}/${name}`;
-  const db = createDb(url);
+  // アプリは最小権限のロール ccai_app で接続する（SPEC-000c AC-6）。検証用の admin は superuser
+  const db = createDb(`${base.replace("postgres:ccai_test@", `${APP_ROLE}:${APP_ROLE_PASSWORD}@`)}/${name}`);
   const admin = new Pool({ connectionString: url, max: 3 });
   return {
     db,

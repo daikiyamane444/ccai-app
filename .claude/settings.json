@@ -7,8 +7,6 @@
       "Read(./**/.env.production)",
       "Read(./**/.env.development)",
       "Read(./**/secrets/**)",
-      "Bash(git push:*)",
-      "Bash(git remote add:*)",
       "Bash(gh repo create:*)",
       "Bash(vercel:*)",
       "Bash(npx vercel:*)",
@@ -23,7 +21,15 @@
       "Bash(supabase db push:*)",
       "Bash(npx supabase db push:*)",
       "Bash(rm -rf:*)",
-      "Bash(sudo:*)"
+      "Bash(sudo:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push --force-with-lease:*)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(git remote add:*)",
+      "Bash(git remote set-url:*)"
     ]
   }
 }

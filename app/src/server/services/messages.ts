@@ -3,6 +3,7 @@ export const MSG = {
   loginFailed: "メールアドレスまたはパスワードが正しくありません",
   network: "通信できませんでした。電波の良い場所でもう一度お試しください",
   notConfigured: "接続先が設定されていません（開発者向け: app/README.md を参照）",
+  signupClosed: "現在、新規登録を受け付けていません",
   emailTaken: "このメールアドレスは登録済みです",
   required: "入力してください",
   emailFormat: "メールアドレスの形式が正しくありません",

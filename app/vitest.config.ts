@@ -14,6 +14,9 @@ export default defineConfig({
       SUPABASE_ANON_KEY: "",
       SUPABASE_SERVICE_ROLE_KEY: "",
       DATABASE_URL: "",
+      DB_HOST: "",
+      DB_PASSWORD: "",
+      SIGNUP_ALLOWED_EMAILS: "",
     },
   },
 });

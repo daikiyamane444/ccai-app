@@ -27,10 +27,11 @@ describe("AC-3 .env.example と .gitignore", () => {
 
   it("コードが読む環境変数がすべて .env.example に並んでいる", () => {
     const used = new Set<string>();
-    for (const f of [...srcFiles, join(appDir, "next.config.ts"), join(appDir, "tests/global-setup.ts")]) {
+    const integration = walk(join(appDir, "tests/integration"), (f) => /\.ts$/.test(f));
+    for (const f of [...srcFiles, ...integration, join(appDir, "next.config.ts"), join(appDir, "tests/global-setup.ts")]) {
       const text = readFileSync(f, "utf8");
       for (const m of text.matchAll(/process\.env\.([A-Z][A-Z0-9_]+)/g)) used.add(m[1]);
-      for (const m of text.matchAll(/getEnv\(\s*["']([A-Z][A-Z0-9_]+)["']\s*\)/g)) used.add(m[1]);
+      for (const m of text.matchAll(/(?:getEnv|read)\(\s*["']([A-Z][A-Z0-9_]+)["']\s*\)/g)) used.add(m[1]);
     }
     for (const skip of ["NODE_ENV", "NEXT_RUNTIME"]) used.delete(skip);
     expect([...used].filter((n) => !names.includes(n))).toEqual([]);
@@ -63,7 +64,7 @@ describe("AC-3 .env.example と .gitignore", () => {
       join(appDir, ".env.example"),
       join(appDir, "README.md"),
     ].filter((f) => existsSync(f));
-    const patterns = [/eyJ[A-Za-z0-9_-]{20,}/, /sk-[A-Za-z0-9]{20,}/, /sb_secret_[A-Za-z0-9]+/, /postgres(?:ql)?:\/\/[^:\s/]+:[^@\s]+@/];
+    const patterns = [/eyJ[A-Za-z0-9_-]{20,}/, /sk-[A-Za-z0-9]{20,}/, /sb_secret_[A-Za-z0-9]+/, /postgres(?:ql)?:\/\/[^:\s/$]+:[^@\s]+@/];
     for (const f of files) {
       const text = readFileSync(f, "utf8");
       for (const p of patterns) expect(text, `${rel(f)} が ${p} に一致`).not.toMatch(p);
@@ -217,5 +218,114 @@ describe("AC-18 範囲（依存関係とルート）", () => {
       "page.tsx",
       "register/page.tsx",
     ]);
+  });
+});
+
+describe("SPEC-000c 公開と結合テストの定義", () => {
+  const repoRoot = resolve(appDir, "..");
+  const workflow = readFileSync(join(repoRoot, ".github/workflows/integration.yml"), "utf8");
+
+  it("AC-15 ブラウザに渡る種類の環境変数（NEXT_PUBLIC_）を使っていない。.env.example にも作っていない", () => {
+    for (const f of [...srcFiles, join(appDir, "next.config.ts"), join(appDir, ".env.example"), join(appDir, "vercel.json")]) {
+      const text = readFileSync(f, "utf8").split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
+      expect(text, rel(f)).not.toMatch(/NEXT_PUBLIC_[A-Z]/);
+    }
+  });
+
+  it("AC-14 Vercel の関数の実行地域が東京（hnd1）で、Hobby で許される1地域だけ", () => {
+    const v = JSON.parse(read("vercel.json"));
+    expect(v.regions).toEqual(["hnd1"]);
+  });
+
+  it("結合テストの起動は手動（workflow_dispatch）だけ。push・pull_request・schedule では動かない", () => {
+    const on = workflow.slice(workflow.indexOf("\non:"), workflow.indexOf("\npermissions:"));
+    expect(on).toMatch(/workflow_dispatch/);
+    expect(on).not.toMatch(/\b(push|pull_request|pull_request_target|schedule|workflow_run|issues|issue_comment)\b\s*:/);
+    expect(workflow).toMatch(/permissions:\s*\n\s+contents:\s*read/);
+  });
+
+  it("ワークフローは秘密情報を secrets から環境変数に渡すだけで、値を出力しない・Postgres 管理者のパスワードを使わない", () => {
+    const code = workflow.replace(/^\s*#.*$/gm, "");
+    expect(code).not.toMatch(/\becho\b|::add-mask|\bprintenv\b|\benv\s*$|\bset\s+-x\b|--debug|ACTIONS_STEP_DEBUG|RUNNER_DEBUG/m);
+    expect(code).not.toMatch(/\$\{\{\s*secrets\.(?!SUPABASE_URL|SUPABASE_ANON_KEY|SUPABASE_SERVICE_ROLE_KEY|DB_HOST|DB_PASSWORD|CI_SITE_URL|CI_LEAK_PROBE)[A-Z_]+/);
+    expect(code).not.toMatch(/postgres:|DATABASE_URL|POSTGRES_PASSWORD|SUPABASE_DB_PASSWORD/i);
+    // secrets の参照は env の値としてだけ使う（run の中に直接書かない）
+    for (const m of code.matchAll(/^\s*-?\s*run:.*$/gm)) expect(m[0]).not.toMatch(/secrets\./);
+  });
+
+  it("結合テストのコードが、秘密・トークン・本人のメールアドレスを出力しない（console 出力なし。expect に値そのものを渡さない）", () => {
+    for (const f of walk(join(appDir, "tests/integration"), (x) => /\.ts$/.test(x))) {
+      const text = readFileSync(f, "utf8");
+      expect(text, rel(f)).not.toMatch(/console\.(log|error|warn|info|debug)/);
+    }
+  });
+
+  it("結合テストは、決まった形以外のユーザーを削除しない（削除の対象は isCiEmail を通ったものだけ）", () => {
+    const env = read("tests/integration/env.ts");
+    expect(env).toMatch(/filter\(\(u\) => isCiEmail\(u\.email\)\)/);
+    // deleteUser / deleteAccount を呼ぶ箇所は、後片付け（deleteCiUsers）の中だけ
+    const calls = [...env.matchAll(/admin\.deleteUser|auth\.admin\.deleteUser|deleteAccount\(/g)].length;
+    expect(calls).toBeGreaterThan(0);
+    const sites = read("tests/integration/site.itest.ts") + read("tests/integration/long.itest.ts");
+    expect(sites).not.toMatch(/deleteUser|deleteAccount/);
+  });
+
+  it("マイグレーションの適用や設定の変更をしない（結合テストにDDLがない）", () => {
+    for (const f of walk(join(appDir, "tests/integration"), (x) => /\.ts$/.test(x))) {
+      expect(readFileSync(f, "utf8"), rel(f)).not.toMatch(/\b(create|alter|drop)\s+(table|role|policy|schema|function|extension)\b|\bgrant\s+\w|\brevoke\s+\w/i);
+    }
+  });
+
+  it("AC-4 ビルド検査が .rsc を対象にしている", () => {
+    expect(read("scripts/check-build.mjs")).toMatch(/\.rsc/);
+  });
+});
+
+describe("SPEC-000c AC-7 ログアウトの失効範囲（全端末）の記述が一致している（A-8）", () => {
+  it("型の説明・特権部品・偽の認証基盤・ハンドラ・README が、いずれも全端末（global）と書いている", () => {
+    expect(read("src/server/auth/types.ts")).toMatch(/全端末/);
+    expect(read("src/server/privileged/index.ts")).toMatch(/global/);
+    expect(read("src/server/privileged/index.ts")).toMatch(/全端末/);
+    expect(read("src/server/auth/fake.ts")).toMatch(/全セッション/);
+    expect(read("src/server/handlers/index.ts")).toMatch(/全端末/);
+    expect(read("README.md")).toMatch(/ログアウトは全端末/);
+    // 「そのセッションだけ」を失効させるという古い記述が残っていない
+    for (const f of srcFiles) expect(readFileSync(f, "utf8"), rel(f)).not.toMatch(/そのセッションを失効|scope:\s*["']local["']|"local"/);
+  });
+});
+
+describe("SPEC-000c QA CI-1・CI-2", () => {
+  const repoRoot = resolve(appDir, "..");
+  const workflow = readFileSync(join(repoRoot, ".github/workflows/integration.yml"), "utf8");
+
+  it("CI-1 秘密情報はジョブ全体の env に置かない（ステップの env だけ）", () => {
+    for (const m of workflow.matchAll(/^ {4}env:\s*$/gm)) expect(m[0], "ジョブ直下の env").toBe("");
+    // npm ci・npm test のステップには env を付けない
+    expect(workflow).toMatch(/- run: npm ci\n(?:\s*#.*\n)*\s+- run: npm test\n(?:\s*#.*\n)*\s+- run: /);
+  });
+
+  it("CI-2 後片付けのステップが if: always() で動き、管理用キーとURLだけを受け取る", () => {
+    const blocks = [...workflow.matchAll(/- run: npm run ci:cleanup\n\s+if: \$\{\{ always\(\) \}\}\n\s+env:\n((?:\s+\w+: .*\n?)+)/g)];
+    expect(blocks.length).toBe(2);
+    for (const b of blocks) expect([...b[1].matchAll(/^\s+(\w+):/gm)].map((x) => x[1]).sort()).toEqual(["SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_URL"]);
+  });
+
+  it("CI-2 後片付けスクリプトの判定の正規表現が、結合テストの CI_EMAIL_RE と同じ", () => {
+    const lib = read("tests/integration/lib.ts").match(/CI_EMAIL_RE = (\/.*\/);/)![1];
+    const script = read("scripts/ci-cleanup.mjs").match(/const CI_EMAIL_RE = (\/.*\/);/)![1];
+    expect(script).toBe(lib);
+    expect(read("scripts/ci-cleanup.mjs")).not.toMatch(/\$\{(u\.email|key|url)\}/);
+  });
+
+  it("CI-2 テスト用ユーザーのパスワードは実行ごとにランダムで、コードに固定値がない", () => {
+    const env = read("tests/integration/env.ts");
+    expect(env).toMatch(/PASSWORD = `Ci-\$\{randomBytes\(/);
+    expect(env).not.toMatch(/ci-Password/);
+  });
+
+  it("D-017 文字起こし2本は .gitignore で除外されている", () => {
+    const ig = readFileSync(join(repoRoot, ".gitignore"), "utf8");
+    expect(ig).toContain("docs/sources/20261002_195452_話者別文字起こし.md");
+    expect(ig).toContain("docs/sources/新規録音_話者別文字起こし.md");
   });
 });

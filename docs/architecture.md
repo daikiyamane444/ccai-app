@@ -320,3 +320,43 @@ Vercel / HTTPS / 実機:
 ### 11-3. 設計上の判断（後続SPECへの引き継ぎ）
 - アカウント削除で、相手が残る pair の行は変更しない（「他のユーザーのデータは1件も変わらない」の解釈）。メンバー0人になった pair のみ削除する。相手残存時の pair の扱い（ended にするか等）は SPEC-003 で決める
 - Next.js 16 の RSC は cookie を設定できないため、アクセストークンの期限切れ時はホームが `GET /api/auth/refresh` へ移し、更新後に戻す（`?r=1` でループを防ぐ）
+
+---
+
+## 12. 個人用公開（SPEC-000c）の実装メモ（2026-10-07 追記）
+
+### 12-1. 追加・変更した設計
+- **アプリ用の最小権限DBロール `ccai_app`**（マイグレーション `20261008000001_app_role.sql`）: テーブル権限なし・BYPASSRLS なし・NOINHERIT。`anon`／`authenticated`／`service_role` への SET ROLE だけができる。パスワードはSQLに書かず、`supabase/manual/set-app-role-password.sql`（DBの中で生成して1回だけ表示）で設定する。ローカルの自動テストも、このロールで接続する（SET ROLE を忘れた処理は権限エラー 42501 になることをテストで確認）。
+- **登録の限定**: `SIGNUP_ALLOWED_EMAILS`（サーバー側の環境変数）。`services/signup-policy.ts` の方針部品に切り出し、`registerUser` が入力検証のあと・認証基盤の呼び出しの前に判定する。空・未設定は全部拒否。固定文で断り、理由は伝えない。
+- **DB 接続情報**: `DB_HOST`／`DB_PASSWORD` などの部品から組み立てる（人間が接続文字列を手で作らない）。`DATABASE_URL` も引き続き使える（自動テスト）。Supabase のプーラーではユーザー名に `.<プロジェクトID>` を自動で付け、既定ポートは 6543（トランザクションモード。`SET LOCAL` は `BEGIN`〜`COMMIT` の中で完結するので動作する想定。結合テストで確認）。
+- **ログアウト（A-1・A-8）**: 全端末（`scope: global`）を正とする。アクセストークンが期限切れで失効要求が拒否されたら、リフレッシュトークンで更新してから、新しいトークンで失効させる。偽の認証基盤も、本物と同じく期限切れ・失効済みトークンでの失効を拒否する（これで A-1 がテストで再現できる）。
+- **検索エンジン**: `X-Robots-Tag: noindex, nofollow, noarchive`（全パス）、`<meta name="robots">`、`public/robots.txt`。
+- **Vercel**: `vercel.json` で `regions: ["hnd1"]`（Hobby は単一地域のみ）。環境変数は `NEXT_PUBLIC_` を使わない（テストが確認）。
+- **結合テスト**: `app/tests/integration/*.itest.ts` と `.github/workflows/integration.yml`（手動起動のみ）。DDL・設定変更をしない。触るのは `ccai-ci+<実行ID>-<n>@example.invalid` のユーザーだけで、前後で他のユーザー数とプロフィール・所属の件数を比べる。ログには値を出さない。
+- **ビルド検査**: ブラウザに配信される `.rsc` も検査対象に追加（A-5）。ダミーの登録許可リスト・DB 部品の値も漏れ検査に加えた。
+
+### 12-2. 11-2 の確認項目と QA 追加推奨の確認状況（実施結果は、結合テスト・人間確認のあとに追記する）
+
+| 11-2 項目 | 確かめ方（SPEC-000c） | 状況（2026-10-07 時点） |
+| --- | --- | --- |
+| 1 重複登録の応答、登録直後のログイン | 結合テスト AC-8（`real.itest.ts`） | 未実施（コードは用意済み） |
+| 2 ログアウトでの失効、リフレッシュの回転、期限切れでのログアウト | 結合テスト AC-9、AC-12（`real.itest.ts`、`long.itest.ts`） | 未実施 |
+| 3 メール確認オフ | 人間・管理画面（手順3-1）＋結合テスト AC-8 | 未実施 |
+| 4 `postgres` 系ロールでの SET ROLE、接続方式、SSL | 結合テスト AC-10（最小権限ロール `ccai_app` で確認） | 未実施。**`postgres` が `grant anon, authenticated, service_role to ccai_app` できるかは公式ドキュメントで未確認**（マイグレーション2の実行時に分かる） |
+| 5 新しい表の既定権限 | 結合テスト AC-10（権限一覧）、Data API の無効化は人間・管理画面 | 未実施 |
+| 6 削除の連鎖、バックアップの保存場所 | 結合テスト AC-11。バックアップは Free プランでは自動バックアップなしのため「該当なし」 | 未実施 |
+| 7 Vercel でのビルド、環境変数 | 人間・管理画面（手順9）、コード確認（NEXT_PUBLIC_ なし） | 未実施 |
+| 8 HTTPS の cookie | 結合テスト AC-16、人間（手順11-4） | 未実施 |
+| 9〜12 iPhone・PC の実機 | 人間・画面（手順11〜12） | 未実施 |
+
+### 12-3. 公式ドキュメントでの確認（確認日 2026-10-07）と、未確認のまま残る点
+出典は docs/reviews/spec-review-SPEC-000c-v1.md の表を参照。
+
+確認できた: Vercel Hobby は単一地域を指定でき、`vercel.json` の `regions` で指定する。Supabase の Data API は「Enable Data API」で無効にできる。プーラーは IPv4 対応（GitHub Actions 向け）。Supabase Free は無活動で一時停止し、Resume project で再開できる。GitHub Free の非公開リポジトリの Actions は月2,000分で、支払い方法がなければ枠を使い切ると止まる。
+
+未確認: `postgres` ロールによる `ccai_app` への `anon`／`authenticated`／`service_role` の付与、メール確認オフ時の重複登録の応答コード、リフレッシュトークンの再利用猶予（既定10秒と想定）、`hnd1` の表記と `x-vercel-id` の形式、SQL Editor が複数文の最後の結果を表示するか、Vercel の Deployment Protection の既定、Vercel・Supabase でのクレジットカード要否、新しいキー表記（publishable／secret）での動作、Vercel のログ保持（Hobby は1時間と記載。相談本文のログの確認は SPEC-001）。
+
+### 12-4. 残る注意（SPEC-001 より前に再検討）
+- DB への SSL は暗号化のみで、サーバー証明書の検証をしていない（`rejectUnauthorized: false`）。Supabase の CA 証明書を設定する方式は、相談本文を保存する SPEC-001 の前に検討する。
+- 結合テストは本体のプロジェクトに対して流す（D-016）。SPEC-001 の前に、テスト専用プロジェクトへ分ける。
+- 最小権限ロールが使えない場合の代わり（`postgres` で接続）は、CI に管理者パスワードが入るため、人間の判断が要る（レビューの指摘）。

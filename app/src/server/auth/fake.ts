@@ -4,7 +4,7 @@ import { AuthError, type AuthProvider, type AuthResult, type AuthUser } from "./
 /**
  * 自動テスト用の偽の認証基盤（Supabase Auth の振る舞いを模す）。本番コードからは使わない。
  * 模している点: メールの大文字小文字を区別しない／同じメールの二重登録は email_taken／誤りは invalid_credentials で区別しない／
- *   ログアウト（signOut）でそのセッションが失効する／アカウント削除で全セッションが失効する／アクセストークンには期限がある。
+ *   ログアウト（signOut）でその利用者の全セッションが失効する（期限切れ・失効済みのトークンでは拒否される）／アカウント削除で全セッションが失効する／アクセストークンには期限がある。
  * 模していない点・本物との差は docs/architecture.md の「SPEC-000c に回す確認項目」に記録する。
  */
 export type FakeAuthOptions = {
@@ -85,11 +85,13 @@ export class FakeAuth implements AuthProvider {
     return { user, tokens: this.newSession(user.id) };
   }
 
+  /** 本物と同じく、無効・期限切れ・失効済みのアクセストークンでは失効できない（AuthError invalid_token）。成功すると、その利用者の全セッションを失効させる（global） */
   async signOut(accessToken: string): Promise<void> {
     await this.tick();
     const a = this.access.get(accessToken);
-    const s = a ? this.sessions.get(a.sessionId) : undefined;
-    if (s) s.revoked = true;
+    const s = a && !a.expired ? this.sessions.get(a.sessionId) : undefined;
+    if (!s || s.revoked) throw new AuthError("invalid_token");
+    for (const other of this.sessions.values()) if (other.userId === s.userId) other.revoked = true;
   }
 
   async deleteUser(userId: string): Promise<void> {

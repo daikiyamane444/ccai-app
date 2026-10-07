@@ -4,9 +4,10 @@ import type { Db } from "../db/pool";
 import { createProfile } from "../db/profile";
 import { deleteUserData } from "../privileged";
 import { MSG } from "./messages";
+import type { SignupPolicy } from "./signup-policy";
 import { validateRegister, type FieldErrors } from "./validation";
 
-export type Deps = { auth: AuthProvider; db: Db };
+export type Deps = { auth: AuthProvider; db: Db; signup: SignupPolicy };
 
 export type RegisterOutcome =
   | { ok: true; tokens: Tokens }
@@ -28,6 +29,9 @@ export async function registerUser(deps: Deps, input: Record<string, unknown>): 
     ageConfirmed: input.ageConfirmed,
   });
   if (!v.ok) return { ok: false, status: 400, message: MSG.badRequest, fieldErrors: v.errors };
+
+  // 登録の限定（SPEC-000c）。一覧にないアドレスは、認証基盤に送らずに固定文で断る（理由・一覧の中身は伝えない）
+  if (!deps.signup.isAllowed(v.value.email)) return { ok: false, status: 403, message: MSG.signupClosed };
 
   let result: AuthResult;
   try {

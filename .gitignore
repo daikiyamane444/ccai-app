@@ -17,3 +17,7 @@ coverage/
 .vscode/
 .idea/
 .claude/settings.local.json
+
+# 会話の文字起こし（D-017）。PC にだけ置き、GitHub には上げない
+docs/sources/20261002_195452_話者別文字起こし.md
+docs/sources/新規録音_話者別文字起こし.md

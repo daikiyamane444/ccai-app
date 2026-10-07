@@ -72,8 +72,12 @@ export async function deleteAuthUser(userId: string): Promise<void> {
   if (error) throw new Error(`auth admin deleteUser failed: ${error.code ?? error.name}`);
 }
 
-/** アクセストークンのセッションを失効させる（ログアウト後に古いトークンで入れないようにする。AC-7） */
-export async function revokeAuthSession(accessToken: string): Promise<void> {
+/**
+ * 利用者の全セッションを失効させる（scope: global。全端末からのログアウト。SPEC-000c A-8）。
+ * アクセストークンが無効・期限切れだと、認証基盤は拒否する（status 401/403）。失敗は例外にせず結果で返し、アダプタが種類に直す。
+ */
+export async function revokeAuthSession(accessToken: string): Promise<{ ok: true } | { ok: false; status: number; code: string }> {
   const { error } = await adminClient().auth.admin.signOut(accessToken, "global");
-  if (error) throw new Error(`auth admin signOut failed: ${error.code ?? error.name}`);
+  if (!error) return { ok: true };
+  return { ok: false, status: error.status ?? 0, code: error.code ?? error.name };
 }

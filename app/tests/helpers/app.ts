@@ -1,10 +1,14 @@
 import { FakeAuth } from "@/server/auth/fake";
 import { SESSION_COOKIE } from "@/server/session";
 import type { TestDb } from "./db";
+import type { SignupPolicy } from "@/server/services/signup-policy";
 
-export function makeDeps(t: TestDb, opts: ConstructorParameters<typeof FakeAuth>[0] = {}) {
+/** 既存のテスト用：誰でも登録できる方針（登録の限定は auth-signup-policy.test.ts で個別に確かめる） */
+export const openSignup: SignupPolicy = { isAllowed: () => true };
+
+export function makeDeps(t: TestDb, opts: ConstructorParameters<typeof FakeAuth>[0] = {}, signup: SignupPolicy = openSignup) {
   const auth = new FakeAuth({ mirror: t.mirror, ...opts });
-  return { auth, db: t.db };
+  return { auth, db: t.db, signup };
 }
 
 export function post(path: string, body: unknown, cookie?: string, contentType = "application/json"): Request {

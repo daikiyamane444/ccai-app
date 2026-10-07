@@ -14,6 +14,9 @@ const DUMMY = {
   SUPABASE_ANON_KEY: "dummy-anon-key-zzz111",
   SUPABASE_SERVICE_ROLE_KEY: "dummy-service-role-zzz222",
   DATABASE_URL: "postgres://dummyuser:dummypass-zzz333@127.0.0.1:1/dummydb",
+  DB_HOST: "dummy-db-host-zzz444.invalid",
+  DB_PASSWORD: "dummy-db-password-zzz555",
+  SIGNUP_ALLOWED_EMAILS: "dummy-owner-zzz666@example.invalid",
 };
 let passed = 0;
 const failures = [];
@@ -48,15 +51,29 @@ if (build.status !== 0) finish();
 const publicFiles = existsSync(join(appDir, "public")) ? walk(join(appDir, "public")).filter((f) => !/\.png$/.test(f)) : [];
 const browserFiles = [
   ...walk(join(distDir, "static")),
-  ...walk(join(distDir, "server")).filter((f) => f.endsWith(".html")),
+  // HTML と、ブラウザに配信される RSC ペイロード（.rsc。SPEC-000c A-5）
+  ...walk(join(distDir, "server")).filter((f) => f.endsWith(".html") || f.endsWith(".rsc")),
   ...publicFiles,
 ];
-const needles = [...Object.values(DUMMY), "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_ANON_KEY", "SUPABASE_URL", "DATABASE_URL", "service_role", "dummypass"];
+const needles = [
+  ...Object.values(DUMMY),
+  ...Object.keys(DUMMY),
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "SUPABASE_ANON_KEY",
+  "SUPABASE_URL",
+  "DATABASE_URL",
+  "SIGNUP_ALLOWED_EMAILS",
+  "DB_PASSWORD",
+  "service_role",
+  "dummypass",
+];
 const hits = [];
 for (const f of browserFiles) {
   const text = readFileSync(f, "utf8");
   for (const n of needles) if (text.includes(n)) hits.push(`${f.replace(appDir + "/", "")} に ${n}`);
 }
+const rscCount = browserFiles.filter((f) => f.endsWith(".rsc")).length;
+check(`検査の対象に RSC ペイロード（.rsc）が含まれる（${rscCount}ファイル）`, rscCount > 0);
 check(`ブラウザ向け成果物（${browserFiles.length}ファイル）に接続先・キー・環境変数名が含まれない`, hits.length === 0, hits.join(", "));
 const clientJs = walk(join(distDir, "static")).filter((f) => f.endsWith(".js"));
 check("ブラウザ向けJSに認証SDK（supabase）が含まれない", !clientJs.some((f) => /supabase/i.test(readFileSync(f, "utf8"))));
@@ -95,6 +112,7 @@ try {
     check("AC-2 /login が接続先なしで200・ログイン画面が出る", r.status === 200 && html.includes("ログイン"), `status=${r.status}`);
     check("/login に no-store", /no-store/.test(r.headers.get("cache-control") ?? ""));
     check("セキュリティヘッダ（nosniff・DENY）", r.headers.get("x-content-type-options") === "nosniff" && r.headers.get("x-frame-options") === "DENY");
+    check("AC-7 全ページに noindex（X-Robots-Tag）", /noindex/.test(r.headers.get("x-robots-tag") ?? "") && /name="robots" content="noindex/.test(html));
     check("X-Powered-By を出さない", !r.headers.get("x-powered-by"));
 
     r = await fetch(`${base}/register`);
@@ -114,6 +132,18 @@ try {
 
     r = await fetch(`${base}/api/auth/login`, { method: "POST", headers: { "content-type": "text/plain" }, body: "{}" });
     check("JSON以外のPOSTは拒否される（CSRF対策）", r.status === 415 || r.status === 400, `status=${r.status}`);
+
+    r = await fetch(`${base}/robots.txt`);
+    const robots = await r.text();
+    check("AC-7 robots.txt が全体のクロールを拒否する", r.status === 200 && /Disallow:\s*\/\s*$/m.test(robots) && /noindex/.test(r.headers.get("x-robots-tag") ?? ""), `status=${r.status}`);
+
+    r = await fetch(`${base}/api/auth/register`, {
+      method: "POST",
+      headers: json,
+      body: JSON.stringify({ email: "stranger@example.com", password: "password123", displayName: "x", ageConfirmed: true }),
+    });
+    const rb = await r.text();
+    check("AC-5 許可の一覧が未設定なら、登録は403で固定文（認証基盤に送らない。接続先なしでも503にならない）", r.status === 403 && rb.includes("新規登録を受け付けていません"), `status=${r.status} body=${rb}`);
 
     r = await fetch(`${base}/manifest.webmanifest`);
     check("AC-16 マニフェストが配信される", r.status === 200 && (await r.json()).name === "CCAI（仮称）");
