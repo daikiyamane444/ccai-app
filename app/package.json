@@ -1,0 +1,35 @@
+{
+  "name": "ccai-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CCAI（仮称）SPEC-000a 技術基盤",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "node scripts/run-tests.mjs",
+    "test:unit": "vitest run",
+    "test:build": "node scripts/check-build.mjs",
+    "gen:icons": "node scripts/gen-icons.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.117.2",
+    "next": "^16.4.0",
+    "pg": "^8.23.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "embedded-postgres": "^17.10.0-beta.17",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  }
+}

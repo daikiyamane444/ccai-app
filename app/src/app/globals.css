@@ -1,0 +1,70 @@
+:root {
+  --bg: #f7f5f0;
+  --fg: #22302c;
+  --muted: #5c6b66;
+  --primary: #2f6f62;
+  --primary-fg: #ffffff;
+  --border: #c9d1cd;
+  --error: #b3261e;
+  --surface: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14201d;
+    --fg: #e8efec;
+    --muted: #9fb0aa;
+    --primary: #5fb3a1;
+    --primary-fg: #0d1a17;
+    --border: #35504a;
+    --error: #ff8a80;
+    --surface: #1c2c28;
+  }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  line-height: 1.6;
+}
+.page { max-width: 430px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 1.5rem; margin: 8px 0 16px; }
+.muted { color: var(--muted); margin-top: -8px; }
+.field { display: block; margin-bottom: 16px; }
+.field > span { display: block; margin-bottom: 4px; font-size: 0.95rem; }
+input[type="email"], input[type="password"], input[type="text"] {
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 12px;
+  font-size: 16px; /* iOS の自動拡大を防ぐ（16px以上） */
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.check { display: flex; align-items: center; gap: 12px; min-height: 44px; margin-bottom: 8px; }
+.check input { width: 24px; height: 24px; }
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 44px;
+  min-height: 48px; /* タップ領域 44px 以上 */
+  padding: 10px 16px;
+  margin-top: 12px;
+  font-size: 16px;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn.primary { color: var(--primary-fg); background: var(--primary); border-color: var(--primary); }
+.btn.link { background: transparent; border-color: transparent; color: var(--primary); text-decoration: underline; }
+.btn:disabled { opacity: 0.6; cursor: default; }
+.error { display: block; color: var(--error); font-style: normal; margin: 4px 0 8px; font-size: 0.95rem; }
+.greeting { font-size: 1.1rem; }
