@@ -1,0 +1,19 @@
+# 秘密情報
+.env
+.env.*
+!.env.example
+secrets/
+
+# 依存・ビルド成果物
+node_modules/
+dist/
+build/
+.next/
+out/
+coverage/
+
+# OS・エディタ・個人設定
+.DS_Store
+.vscode/
+.idea/
+.claude/settings.local.json

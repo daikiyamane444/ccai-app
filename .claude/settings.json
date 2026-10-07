@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./**/.env)",
+      "Read(./**/.env.local)",
+      "Read(./**/.env.*.local)",
+      "Read(./**/.env.production)",
+      "Read(./**/.env.development)",
+      "Read(./**/secrets/**)",
+      "Bash(git push:*)",
+      "Bash(git remote add:*)",
+      "Bash(gh repo create:*)",
+      "Bash(vercel:*)",
+      "Bash(npx vercel:*)",
+      "Bash(netlify:*)",
+      "Bash(npx netlify:*)",
+      "Bash(firebase deploy:*)",
+      "Bash(npx firebase deploy:*)",
+      "Bash(fly deploy:*)",
+      "Bash(flyctl deploy:*)",
+      "Bash(wrangler deploy:*)",
+      "Bash(npx wrangler deploy:*)",
+      "Bash(supabase db push:*)",
+      "Bash(npx supabase db push:*)",
+      "Bash(rm -rf:*)",
+      "Bash(sudo:*)"
+    ]
+  }
+}
