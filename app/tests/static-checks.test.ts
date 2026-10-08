@@ -262,7 +262,8 @@ describe("SPEC-000c 公開と結合テストの定義", () => {
 
   it("結合テストは、決まった形以外のユーザーを削除しない（削除の対象は isCiEmail を通ったものだけ）", () => {
     const env = read("tests/integration/env.ts");
-    expect(env).toMatch(/filter\(\(u\) => isCiEmail\(u\.email\)\)/);
+    // 対象は「決まった形のアドレス」か「この実行で作ったユーザー（IDで記録）」だけ
+    expect(env).toMatch(/filter\(\(u\) => isCiEmail\(u\.email\) \|\| ctx\.created\.has\(u\.id\)\)/);
     // deleteUser / deleteAccount を呼ぶ箇所は、後片付け（deleteCiUsers）の中だけ
     const calls = [...env.matchAll(/admin\.deleteUser|auth\.admin\.deleteUser|deleteAccount\(/g)].length;
     expect(calls).toBeGreaterThan(0);
@@ -319,7 +320,8 @@ describe("SPEC-000c QA CI-1・CI-2", () => {
 
   it("CI-2 テスト用ユーザーのパスワードは実行ごとにランダムで、コードに固定値がない", () => {
     const env = read("tests/integration/env.ts");
-    expect(env).toMatch(/PASSWORD = `Ci-\$\{randomBytes\(/);
+    expect(env).toMatch(/PASSWORD = process\.env\.CI_TEST_PASSWORD \|\| `Ci-\$\{randomBytes\(/);
+    expect(read("scripts/run-integration.mjs")).toMatch(/const testPassword = `Ci-\$\{randomBytes\(/);
     expect(env).not.toMatch(/ci-Password/);
   });
 
@@ -327,5 +329,162 @@ describe("SPEC-000c QA CI-1・CI-2", () => {
     const ig = readFileSync(join(repoRoot, ".gitignore"), "utf8");
     expect(ig).toContain("docs/sources/20261002_195452_話者別文字起こし.md");
     expect(ig).toContain("docs/sources/新規録音_話者別文字起こし.md");
+  });
+});
+
+describe("結合テストの値の出し方（2026-10-08 初回実行の失敗を受けて）", () => {
+  const integrationFiles = walk(join(appDir, "tests/integration"), (x) => /\.ts$/.test(x));
+  const testFiles = integrationFiles.filter((f) => !f.endsWith("/lib.ts"));
+
+  it("結合テスト（lib.ts 以外）は expect を直接使わない。値を出さない確かめ方（ok / sameNumber / sameCode / emptyLabels）だけを使う", () => {
+    expect(testFiles.length).toBeGreaterThan(0);
+    for (const f of testFiles) {
+      const text = readFileSync(f, "utf8");
+      expect(text, rel(f)).not.toMatch(/\bexpect\s*\(|\bassert\s*\(|\.toBeNull\(|\.toEqual\(|\.toBe\(/);
+      expect(text, rel(f)).not.toMatch(/import\s*\{[^}]*\bexpect\b[^}]*\}\s*from\s*["']vitest["']/);
+    }
+  });
+
+  it("値を出さない確かめ方は、真偽・数値・コードの形（英小文字・数字・_・:）だけを expect に渡す", () => {
+    const lib = read("tests/integration/lib.ts");
+    const calls = [...lib.matchAll(/expect\(([^,]+),/g)].map((m) => m[1].trim());
+    expect(calls.sort()).toEqual(["[...labels]", "cond", "shown", 'typeof actual === "number" ? actual : Number.NaN'].sort());
+  });
+
+  it("テスト用アドレスを組み立てるのは lib.ts の ciEmail だけ（他のファイルに「@example.invalid」を書かない）", () => {
+    for (const f of testFiles) expect(readFileSync(f, "utf8"), rel(f)).not.toMatch(/`[^`]*@example\.invalid|"[^"]*@example\.invalid|'[^']*@example\.invalid/);
+  });
+
+  it("結合テストは伏せ字つきの起動スクリプトから動かす（npm の test:integration・test:integration:long）", () => {
+    const pkg = JSON.parse(read("package.json"));
+    expect(pkg.scripts["test:integration"]).toMatch(/^node scripts\/run-integration\.mjs /);
+    expect(pkg.scripts["test:integration:long"]).toMatch(/^node scripts\/run-integration\.mjs /);
+  });
+
+  it("結合テストの設定は、ファイルを1つずつ順番に流す", () => {
+    const cfg = read("vitest.integration.config.ts");
+    expect(cfg).toMatch(/fileParallelism:\s*false/);
+    expect(cfg).toMatch(/maxWorkers:\s*1/);
+  });
+});
+
+// ---- QA v2 の L-1・L-2: トークンを出力に混ぜる書き方を禁止する ----
+const TOKEN_IDENT = /\b(tokens|accessToken|refreshToken|access_token|refresh_token|PASSWORD|password|setCookie|cookie)\b/;
+// 例外として許す2か所（どちらも出力ではなく、要求に付ける値）
+const ALLOWED_TEMPLATES = ["`Bearer ${t.tokens.accessToken}`", "`${SESSION_COOKIE}=${encodeSession(t.tokens)}`"];
+
+/** 位置 i の「(」に対応する「)」までの中身を、トップレベルの「,」で分けて返す（文字列・テンプレート内の記号は無視） */
+function splitArgs(src: string, open: number): string[] {
+  const args: string[] = [];
+  let depth = 0;
+  let cur = "";
+  let quote: string | null = null;
+  for (let i = open; i < src.length; i++) {
+    const ch = src[i];
+    if (quote) {
+      cur += ch;
+      if (ch === "\\") {
+        cur += src[++i] ?? "";
+        continue;
+      }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      quote = ch;
+      cur += ch;
+      continue;
+    }
+    if ("([{".includes(ch)) {
+      depth++;
+      if (depth === 1 && ch === "(") continue;
+    } else if (")]}".includes(ch)) {
+      depth--;
+      if (depth === 0) {
+        args.push(cur.trim());
+        return args;
+      }
+    } else if (ch === "," && depth === 1) {
+      args.push(cur.trim());
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  return args;
+}
+
+/** 結合テストのソースから、トークンが出力に混ざりうる書き方を探す（見つかった箇所の説明を返す。値は含まない） */
+export function tokenLeakFindings(src: string): string[] {
+  const code = src.replace(/^\s*\/\/.*$/gm, "");
+  const out: string[] = [];
+  // 1. テンプレート文字列の ${…} にトークンの変数（例外2か所を除く）
+  for (const m of code.matchAll(/`(?:[^`\\]|\\.)*`/g)) {
+    if (ALLOWED_TEMPLATES.includes(m[0])) continue;
+    for (const e of m[0].matchAll(/\$\{([^}]*)\}/g)) if (TOKEN_IDENT.test(e[1])) out.push(`テンプレート文字列: ${m[0].slice(0, 40)}`);
+  }
+  // 2. Error(…) の引数にトークンの変数
+  for (const m of code.matchAll(/\bError\s*\(/g)) {
+    const args = splitArgs(code, m.index! + m[0].length - 1);
+    if (args.some((a) => TOKEN_IDENT.test(a.replace(/"[^"]*"|'[^']*'/g, "")))) out.push("Error の引数");
+  }
+  // 3. 確かめる部品の説明文（最後の引数）は、文字列かテンプレート文字列だけ。トークンの変数を入れない
+  for (const m of code.matchAll(/\b(ok|sameNumber|sameCode|emptyLabels)\s*\(/g)) {
+    if (/function\s+$/.test(code.slice(Math.max(0, m.index! - 9), m.index!))) continue; // 定義そのもの
+    const args = splitArgs(code, m.index! + m[0].length - 1);
+    const label = args[args.length - 1] ?? "";
+    if (!/^(["'`])[\s\S]*\1$/.test(label)) out.push(`${m[1]} の説明文が文字列でない`);
+    else if (label.startsWith("`") && [...label.matchAll(/\$\{([^}]*)\}/g)].some((e) => TOKEN_IDENT.test(e[1]))) out.push(`${m[1]} の説明文にトークン`);
+  }
+  // 4. 投げる値・console への出力は別の検査（console 禁止）で見る
+  return [...new Set(out)];
+}
+
+describe("QA v2 L-1 トークンを説明文・テンプレート文字列・Error に入れない", () => {
+  const files = walk(join(appDir, "tests/integration"), (x) => /\.ts$/.test(x));
+
+  it("結合テストのコードに、トークンが出力に混ざりうる書き方がない（例外は Bearer ヘッダーと encodeSession の2か所）", () => {
+    for (const f of files) expect(tokenLeakFindings(readFileSync(f, "utf8")), rel(f)).toEqual([]);
+    // 例外の2か所は実際に使われている（例外の一覧が古くならないように）
+    const all = files.map((f) => readFileSync(f, "utf8")).join("\n");
+    for (const t of ALLOWED_TEMPLATES) expect(all).toContain(t);
+  });
+
+  it("（検査の検査）悪い書き方を検出する: 説明文にトークン（S3）、Error にトークン（S4）、テンプレートにトークン、説明文が変数", () => {
+    const bad = {
+      S3: "ok(x === null, `更新は拒否 ${t1.refreshToken}`);",
+      S4: 'throw new Error("refresh failed " + t2.refreshToken);',
+      template: "const s = `token=${r.tokens.accessToken}`;",
+      labelVar: "ok(x, t2.refreshToken);",
+      cookie: "sameNumber(res.status, 200, `cookie ${setCookie}`);",
+    };
+    for (const [k, src] of Object.entries(bad)) expect(tokenLeakFindings(src).length, k).toBeGreaterThan(0);
+    const good = [
+      'ok((await supabaseAuth.refresh(t1.refreshToken)) === null, "親のリフレッシュトークンでの更新は拒否");',
+      'ok(x, `${when}: いまのアクセストークン`);',
+      "const withToken = await call({ Authorization: `Bearer ${t.tokens.accessToken}` });",
+      'throw new Error(`createUser failed: ${error?.code ?? "unknown"}`);',
+    ];
+    for (const src of good) expect(tokenLeakFindings(src), src).toEqual([]);
+  });
+});
+
+describe("QA v2 L-2 ワークフローは伏せ字つきの起動スクリプト経由で結合テストを動かす", () => {
+  const workflow = readFileSync(join(resolve(appDir, ".."), ".github/workflows/integration.yml"), "utf8").replace(/^\s*#.*$/gm, "");
+  const runs = [...workflow.matchAll(/^[ \t]*-?[ \t]*run:[ \t]*(\S.*)$/gm)].map((m) => m[1].trim());
+
+  it("結合テストの起動は npm run test:integration と test:integration:long だけ（vitest・npx・node の直接起動がない）", () => {
+    expect(runs).toContain("npm run test:integration");
+    expect(runs).toContain("npm run test:integration:long");
+    for (const r of runs) {
+      expect(r, r).not.toMatch(/\bvitest\b|\bnpx\b|\bnode\b|itest|vitest\.integration/);
+      expect(["npm ci", "npm test", "npm run test:integration", "npm run test:integration:long", "npm run ci:cleanup"], r).toContain(r);
+    }
+  });
+
+  it("秘密を受け取るステップは、結合テスト（起動スクリプト経由）と後片付けだけ", () => {
+    const steps = workflow.split(/\n\s+- /).filter((s) => /secrets\./.test(s));
+    expect(steps.length).toBe(4);
+    for (const s of steps) expect(s).toMatch(/^run: npm run (test:integration(:long)?|ci:cleanup)\b/);
   });
 });

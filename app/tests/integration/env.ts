@@ -6,16 +6,17 @@
 //  - 失敗時のメッセージに秘密・トークン・本人のメールアドレスを出さない
 import { randomBytes } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { afterAll, beforeAll, expect } from "vitest";
+import { afterAll, beforeAll } from "vitest";
 import { buildDatabaseConnection } from "@/server/config";
 import { createDb, type Db } from "@/server/db/pool";
 import { supabaseAuth } from "@/server/auth/supabase";
 import { createSignupPolicy } from "@/server/services/signup-policy";
 import type { Deps } from "@/server/services/account";
-import { ciEmail, isCiEmail, runIdFromEnv } from "./lib";
+import { ciEmail, isCiEmail, ok, runIdFromEnv, sameNumber } from "./lib";
 
-// テスト用ユーザーのパスワード。実行ごとにランダムに作る（コードに書かない・出力しない）
-export const PASSWORD = `Ci-${randomBytes(18).toString("hex")}`;
+// テスト用ユーザーのパスワード。実行ごとにランダムに作る（コードに書かない・出力しない）。
+// 起動スクリプト（scripts/run-integration.mjs）が CI_TEST_PASSWORD に入れて渡し、出力の伏せ字の対象にする。なければここで作る
+export const PASSWORD = process.env.CI_TEST_PASSWORD || `Ci-${randomBytes(18).toString("hex")}`;
 
 export function requireEnv(...names: string[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -100,9 +101,10 @@ export function useCiGuard(): Ctx {
   const ctx = { runId: runIdFromEnv(), created: new Set<string>() } as { runId: string; created: Set<string> } & Partial<Ctx>;
   let before: Snapshot;
 
+  // 対象: 決まった形のアドレスのユーザーと、この実行で作ったユーザー（ID で記録。万一アドレスが判定に一致しなくても消す）
   async function deleteCiUsers(admin: SupabaseClient, db: Db): Promise<number> {
     let failed = 0;
-    const users = (await listAllUsers(admin)).filter((u) => isCiEmail(u.email));
+    const users = (await listAllUsers(admin)).filter((u) => isCiEmail(u.email) || ctx.created.has(u.id));
     for (const u of users) {
       // 先にDB側（profiles・所属・空になった pair）を消してから、認証側のユーザーを消す（アプリのアカウント削除と同じ順）
       try {
@@ -126,21 +128,26 @@ export function useCiGuard(): Ctx {
   afterAll(async () => {
     if (!ctx.admin || !ctx.db || !before) return; // 準備に失敗したときは、後片付けの対象がない
     const failed = await deleteCiUsers(ctx.admin!, ctx.db!);
-    const remain = (await listAllUsers(ctx.admin!)).filter((u) => isCiEmail(u.email)).length;
+    const all = await listAllUsers(ctx.admin!);
+    const remain = all.filter((u) => isCiEmail(u.email)).length;
+    // 判定（isCiEmail）に頼らず、この実行で作ったユーザーが1人も残っていないことも確かめる
+    const createdLeft = all.filter((u) => ctx.created.has(u.id)).length;
     const after = await snapshot(ctx.admin!, ctx.db!);
     await ctx.db!.pool.end();
     // 値そのものではなく、件数だけを出す
-    expect(failed, `後片付けに失敗したテスト用ユーザー数`).toBe(0);
-    expect(remain, `残ったテスト用ユーザー数`).toBe(0);
-    expect(after.nonCiUsers, `テスト用以外のユーザー数（前${before.nonCiUsers}）`).toBe(before.nonCiUsers);
-    expect(after.profiles, `テスト用以外のプロフィール件数（前${before.profiles}）`).toBe(before.profiles);
-    expect(after.pairMembers, `テスト用以外の所属件数（前${before.pairMembers}）`).toBe(before.pairMembers);
+    sameNumber(failed, 0, "後片付けに失敗したテスト用ユーザー数");
+    sameNumber(remain, 0, "残ったテスト用ユーザー数");
+    sameNumber(createdLeft, 0, "この実行で作ったのに残ったユーザー数（判定に一致しないアドレスの検出）");
+    sameNumber(after.nonCiUsers, before.nonCiUsers, "テスト用以外のユーザー数");
+    sameNumber(after.profiles, before.profiles, "テスト用以外のプロフィール件数");
+    sameNumber(after.pairMembers, before.pairMembers, "テスト用以外の所属件数");
   }, 300_000);
 
   ctx.email = (n) => ciEmail(ctx.runId, n);
   ctx.track = (id) => void ctx.created.add(id);
   ctx.createUser = async (n) => {
-    const email = ciEmail(ctx.runId, n);
+    const email = ciEmail(ctx.runId, n); // 判定に一致しない形なら、ここで例外（ユーザーを作らない）
+    ok(isCiEmail(email), "テスト用アドレスが後片付けの判定に一致する");
     const { data, error } = await ctx.admin!.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
     if (error || !data.user) throw new Error(`createUser failed: ${error?.code ?? error?.name ?? "unknown"}`);
     ctx.created.add(data.user.id);

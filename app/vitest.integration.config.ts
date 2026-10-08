@@ -6,7 +6,12 @@ export default defineConfig({
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   test: {
     include: ["tests/integration/**/*.itest.ts"],
-    fileParallelism: false, // 同じプロジェクトに対して順番に流す（件数の前後比較のため）
+    // 同じプロジェクトに対して、ファイルを1つずつ順番に流す（件数の前後比較が、他のファイルの一時ユーザーに影響されないように）
+    fileParallelism: false,
+    maxWorkers: 1,
+    sequence: { concurrent: false, shuffle: false },
+    // 失敗時の差分表示を短くする（値は ok / sameNumber などで出さない書き方にしているが、念のため）
+    chaiConfig: { truncateThreshold: 40 },
     testTimeout: 120_000,
     hookTimeout: 300_000,
   },

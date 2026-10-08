@@ -1,12 +1,46 @@
+import { expect } from "vitest";
+
 // 結合テスト（本物の Supabase／公開URL）で使う部品のうち、自動テスト（npm test）でも確かめられる純粋な部分。
 // 重要: 失敗時のメッセージに秘密の値・本人のメールアドレス・トークンを出さない。比較は「真偽」だけを expect に渡し、値そのものは渡さない。
 
 /** テスト用ユーザーのメールアドレス。配信されないドメイン（.invalid）に、実行IDと連番を入れた決まった形 */
-export const CI_EMAIL_RE = /^ccai-ci\+[a-z0-9]+-[0-9a-z]+@example\.invalid$/;
+// 連番部分は英小文字・数字と、区切りの「-」を許す（2026-10-08 の初回実行で「setlocal-a」のような名前が判定に一致せず、取り残しが出たため。
+// その取り残し（ccai-ci+<実行ID>-setlocal-a@example.invalid など）も、この判定で後片付けの対象になる）
+export const CI_EMAIL_RE = /^ccai-ci\+[a-z0-9]+-[0-9a-z]+(?:-[0-9a-z]+)*@example\.invalid$/;
 
+/**
+ * テスト用ユーザーのメールアドレスを作る。結合テストでアドレスを作るのは、必ずこの関数だけ（static-checks が確かめる）。
+ * 作ったアドレスが後片付けの判定（isCiEmail）に一致しなければ、その場で例外にする（ユーザーを作る前に止める）。
+ */
 export function ciEmail(runId: string, n: number | string): string {
   const id = runId.toLowerCase().replace(/[^a-z0-9]/g, "") || "local";
-  return `ccai-ci+${id}-${n}@example.invalid`;
+  const label = String(n).toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!label) throw new Error("ciEmail: 連番が空です");
+  const email = `ccai-ci+${id}-${label}@example.invalid`;
+  if (!CI_EMAIL_RE.test(email)) throw new Error("ciEmail: 後片付けの判定に一致しないアドレスになりました");
+  return email;
+}
+
+// ---- 値を出さない確かめ方（結合テストでは expect を直接使わない。失敗時の差分にトークン・キー・メールアドレスが出ないように） ----
+/** 条件が成り立つこと。失敗時に出るのは label と true/false だけ */
+export function ok(cond: boolean, label: string): void {
+  expect(cond, label).toBe(true);
+}
+
+/** 件数・状態コードなど、数値が一致すること（数値は秘密ではないので出してよい） */
+export function sameNumber(actual: number, expected: number, label: string): void {
+  expect(typeof actual === "number" ? actual : Number.NaN, label).toBe(expected);
+}
+
+/** エラーの種類（コード）が一致すること。コードの形（英小文字・数字・_・:）のときだけ表示し、それ以外は伏せる */
+export function sameCode(actual: string, expected: string, label: string): void {
+  const shown = /^[a-z0-9_:]{1,40}$/.test(actual) ? actual : "(非表示)";
+  expect(shown, label).toBe(expected);
+}
+
+/** 一覧（権限の違反など、秘密を含まないラベルの一覧）が空であること */
+export function emptyLabels(labels: readonly string[], label: string): void {
+  expect([...labels], label).toEqual([]);
 }
 
 export function isCiEmail(email: string | undefined | null): boolean {
