@@ -69,12 +69,10 @@ describe("本物の Supabase（結合テスト）", () => {
       ok((await supabaseAuth.refresh(phone.tokens.refreshToken)) === null, "別の端末のセッションも失効している");
     }, 60_000);
 
-    // Supabase の仕様（公式ドキュメント「Sessions」）: リフレッシュトークンは原則1回だけ使える。例外は2つ
-    //  (1) 再利用の猶予（既定10秒）の間  (2) 「いま有効なトークンの1つ前（親）」の再利用 → いま有効なトークンが返る
-    // それ以外の再利用は「漏えいの疑い」として、そのセッションの全リフレッシュトークンが失効する（再利用の検知。既定で有効）。
-    // そのため、確かめるのは「2つ以上前（祖父）のトークンの再利用が拒否され、セッション全体が失効すること」。
-    // 親の再利用が受け付けられる点は仕様どおりで、SPEC-000c AC-9 の文言との差は戦略担当に確認中（docs/reviews の記録を参照）。
-    it("リフレッシュトークンは使うたびに変わり、2つ以上前のトークンの再利用は拒否され、そのセッション全体が失効する", async () => {
+    // SPEC-000c v3 AC-9: 2つ以上前のトークンの再利用は拒否され、検知から猶予（10秒）を過ぎたあとは、
+    // 検知の時点で有効だったトークンでも更新できない。検知直後10秒以内の更新と、アクセストークンの期限内の利用は仕様上許容し、確かめない
+    // （Supabase Auth の旧形式のトークンの動作。docs/architecture.md 12-6）。親の再利用が通る点も仕様どおりで、確かめない。
+    it("2つ以上前のトークンの再利用は拒否され、検知から11秒以上たつと、検知の時点で有効だったトークンでも更新できない", async () => {
       const u = await ctx.createUser("rotate");
       const t1: Tokens = (await supabaseAuth.signIn(u.email, u.password)).tokens;
       const r2 = await supabaseAuth.refresh(t1.refreshToken);
@@ -83,9 +81,10 @@ describe("本物の Supabase（結合テスト）", () => {
       const r3 = await supabaseAuth.refresh(r2!.tokens.refreshToken);
       ok(r3 !== null && r3.tokens.refreshToken !== r2!.tokens.refreshToken, "2回目の更新でトークンが変わる");
       await sleep(13_000);
-      ok((await supabaseAuth.refresh(t1.refreshToken)) === null, "2つ以上前のリフレッシュトークンの再利用は拒否");
-      ok((await supabaseAuth.refresh(r3!.tokens.refreshToken)) === null, "再利用の検知で、いま有効だったリフレッシュトークンも失効");
-    }, 90_000);
+      ok((await supabaseAuth.refresh(t1.refreshToken)) === null, "2つ以上前のリフレッシュトークンの再利用は拒否（ここで再利用を検知）");
+      await sleep(13_000); // 検知から11秒以上待つ（検知直後10秒以内の利用は確かめない）
+      ok((await supabaseAuth.refresh(r3!.tokens.refreshToken)) === null, "検知から11秒以上たつと、検知の時点で有効だったリフレッシュトークンでも更新できない");
+    }, 120_000);
   });
 
   describe("AC-10 DB接続（最小権限ロール・プーラー・権限一覧・Data API）", () => {
