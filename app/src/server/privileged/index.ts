@@ -35,6 +35,8 @@ async function runPrivileged<T>(db: Db, fn: (c: PoolClient) => Promise<T>): Prom
 export async function deleteUserData(db: Db, userId: string): Promise<void> {
   await runPrivileged(db, async (c) => {
     await c.query("DELETE FROM public.profiles WHERE user_id = $1", [userId]);
+    // LLM 利用記録（SPEC-000b）。月次集計は個人を特定しないので消さない（D-012。合計は変わらない）
+    await c.query("DELETE FROM public.llm_usage WHERE user_id = $1", [userId]);
     const mine = await c.query("DELETE FROM public.pair_members WHERE user_id = $1 RETURNING pair_id", [userId]);
     const pairIds: string[] = mine.rows.map((r) => r.pair_id);
     if (pairIds.length) {

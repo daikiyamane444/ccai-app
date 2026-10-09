@@ -411,3 +411,20 @@ Vercel / HTTPS / 実機:
 - ログアウト（`/logout`、scope global）は `models.Logout`（同 358〜360行。ユーザーの全セッションの行を削除）なので、形式によらず全トークンが即座に使えなくなる（Q-1 のテストが成功したことと一致）。
 
 **SPEC との差**: SPEC-000c v2 AC-9「そのうえでセッション全体が失効し、いま有効なトークンでも更新できなくなる」は、旧形式では「検知の直後10秒間は、いま有効だったトークンで更新できる」「アクセストークンは期限まで使える」という点で文字どおりには成り立たない。テストは緩めず、戦略担当に確認中（開発担当の返答を参照）。
+
+---
+
+## 13. LLM 共通部分（SPEC-000b）の実装メモ（2026-10-09 追記）
+
+### 13-1. 構成
+- `app/src/server/llm/`: `types.ts`（共通の形）、`gateway.ts`（`callLlm`。上限・タイムアウト・再試行・利用記録）、`mock.ts`、`plan.ts`（Agent SDK を使う唯一の場所）、`config.ts`（環境変数）、`prompts.ts`、`time.ts`（日本時間の区切り）、`eval.ts`（評価コマンドの本体）、`memory-store.ts`（試走用）、`index.ts`（アプリからの入口）
+- `app/src/server/privileged/llm-usage.ts`: 利用記録・月次集計の読み書き（service_role）。予約は `pg_advisory_xact_lock`（月ごと）で直列にし、同時の呼び出しでも月間上限・1日の回数を超えない
+- マイグレーション `20261009000001_llm_usage.sql`: `llm_usage`（所有者 user_id、または「システム」= is_system）と `llm_monthly`（年月ごとの確定・予約・回数。個人を特定しない）。どちらも RLS 有効・利用者の権限なし・ポリシーなし
+- 追加した依存（開発用のみ）: `@anthropic-ai/claude-agent-sdk`（0.3.295 に固定。約250MB の実行ファイルを含むので、`next.config.ts` の `outputFileTracingExcludes` で公開用の関数から外す）、`tsx`（評価コマンドを TypeScript のまま実行するため）
+
+### 13-2. Agent SDK の安全設定と規約（一次情報。確認日 2026-10-09）
+- SDK の型定義（`@anthropic-ai/claude-agent-sdk` 0.3.295 の `sdk.d.ts`）: `tools: []` は「組み込みツールをすべて無効」。`settingSources: []` は設定ファイルを読まない（CLAUDE.md は `project` を含めたときだけ読む）。`persistSession: false` は会話記録を `~/.claude/projects/` に保存しない。`env` は子プロセスの環境変数を丸ごと置き換える。結果の `modelUsage` がトークン数の正（`usage` は主ループのみ）
+- アダプタの設定: 上記に加え、`allowedTools: []`、`mcpServers: {}`・`strictMcpConfig: true`、`maxTurns: 1`、作業フォルダと設定フォルダ（`CLAUDE_CONFIG_DIR`・`HOME`）を空の一時フォルダにして呼び出しごとに削除、渡す環境変数は `PATH`・トークン・最大出力などだけ（`ANTHROPIC_API_KEY` を渡さない＝従量課金の経路がない）
+- 規約: Claude Code「Legal and compliance」（https://code.claude.com/docs/en/legal-and-compliance ）。Free・Pro・Max は Consumer Terms。OAuth（プランの認証）は購入者の通常の利用のため。Agent SDK を使う製品の開発者は APIキーを使うべきで、利用者の代わりにプランの認証で要求を送ることは許可されない。Pro・Max の上限は Claude Code と Agent SDK の通常の個人利用が前提
+- 運用: プラン方式は人間本人の評価コマンドだけで使う。公開環境（`VERCEL`・`NODE_ENV=production`）では gateway と評価コマンドが拒否する。**SPEC-001 でアプリの機能から LLM を呼ぶ前に、APIキー方式への切替え（D-010 の変更）を人間が決める必要がある**（spec-review-SPEC-000b-v3.md 問い2）
+- 未確認: プランで `claude-sonnet-5-5`・`claude-haiku-4-5-20251001` が選べるか、プランの上限に達したときに SDK が返すエラーの種類（`rate_limit`・`billing_error` を「プラン側の上限」として扱う）、SDK の起動にかかる時間（タイムアウト 30秒の妥当性）。最初の実LLM評価で確かめる

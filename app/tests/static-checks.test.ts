@@ -33,7 +33,7 @@ describe("AC-3 .env.example と .gitignore", () => {
       for (const m of text.matchAll(/process\.env\.([A-Z][A-Z0-9_]+)/g)) used.add(m[1]);
       for (const m of text.matchAll(/(?:getEnv|read)\(\s*["']([A-Z][A-Z0-9_]+)["']\s*\)/g)) used.add(m[1]);
     }
-    for (const skip of ["NODE_ENV", "NEXT_RUNTIME"]) used.delete(skip);
+    for (const skip of ["NODE_ENV", "NEXT_RUNTIME", "VITEST", "VERCEL", "PATH"]) used.delete(skip);
     expect([...used].filter((n) => !names.includes(n))).toEqual([]);
   });
 
@@ -105,11 +105,11 @@ describe("AC-8 / AC-14 ブラウザ向けコードと特権の分離", () => {
     }
   });
 
-  it("privileged を読み込むのは、決められた2か所だけ（アカウント削除の処理と、認証アダプタ）", () => {
-    const allowed = ["src/server/auth/supabase.ts", "src/server/services/account.ts"];
+  it("privileged を読み込むのは、決められた3か所だけ（アカウント削除の処理、認証アダプタ、LLM の入口）", () => {
+    const allowed = ["src/server/auth/supabase.ts", "src/server/services/account.ts", "src/server/llm/index.ts"];
     const users = srcFiles
       .filter((f) => !rel(f).startsWith("src/server/privileged/"))
-      .filter((f) => /from\s+["'](\.\.?\/)+privileged["']|@\/server\/privileged/.test(readFileSync(f, "utf8")))
+      .filter((f) => /from\s+["'](\.\.?\/)+privileged(\/[a-z-]+)?["']|@\/server\/privileged/.test(readFileSync(f, "utf8")))
       .map(rel);
     expect(users.sort()).toEqual(allowed.sort());
   });
@@ -202,7 +202,10 @@ describe("AC-18 範囲（依存関係とルート）", () => {
   });
   it("開発用の依存に、LLM・メール送信・監視・解析のものがない", () => {
     const all = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
-    expect(all.filter((n) => /sentry|datadog|posthog|analytics|mixpanel|resend|nodemailer|sendgrid|mailgun|openai|anthropic|claude|gemini|web-push|firebase/i.test(n))).toEqual([]);
+    // LLM は承認済み（D-010）の Claude Agent SDK だけを開発用の依存として許す（本番では使わない。SPEC-000b）
+    const allowedLlm = ["@anthropic-ai/claude-agent-sdk"];
+    expect(all.filter((n) => !allowedLlm.includes(n) && /sentry|datadog|posthog|analytics|mixpanel|resend|nodemailer|sendgrid|mailgun|openai|anthropic|claude|gemini|web-push|firebase|langchain|ai-sdk|^ai$/i.test(n))).toEqual([]);
+    expect(Object.keys(pkg.dependencies)).not.toContain("@anthropic-ai/claude-agent-sdk");
   });
   it("画面・APIのルートは 000a の範囲だけ（登録・ログイン・ホーム・ログアウト・更新・自分の情報）", () => {
     const routes = walk(join(appDir, "src/app"), (f) => /(page|route)\.tsx?$/.test(f))
@@ -486,5 +489,64 @@ describe("QA v2 L-2 ワークフローは伏せ字つきの起動スクリプト
     const steps = workflow.split(/\n\s+- /).filter((s) => /secrets\./.test(s));
     expect(steps.length).toBe(4);
     for (const s of steps) expect(s).toMatch(/^run: npm run (test:integration(:long)?|ci:cleanup)\b/);
+  });
+});
+
+describe("SPEC-000b LLM の静的確認（AC-1, AC-3, AC-12, AC-15, AC-17）", () => {
+  const stripComments = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/\s\/\/.*$/gm, "");
+  const codeFiles = [...srcFiles, ...walk(join(appDir, "scripts"), (f) => /\.(ts|mjs|js)$/.test(f))];
+
+  it("AC-1 Agent SDK を直接使うのはプラン方式のアダプタ（src/server/llm/plan.ts）だけ。Anthropic の他の SDK・API は直接使わない", () => {
+    // check-build.mjs は「成果物に含まれていないこと」を確かめるために名前を持つだけなので除く
+    const users = codeFiles.filter((f) => !f.endsWith("check-build.mjs") && /claude-agent-sdk/.test(stripComments(readFileSync(f, "utf8")))).map(rel);
+    expect(users).toEqual(["src/server/llm/plan.ts"]);
+    for (const f of codeFiles.filter((x) => !x.endsWith("check-build.mjs"))) {
+      const t = stripComments(readFileSync(f, "utf8"));
+      expect(t, rel(f)).not.toMatch(/@anthropic-ai\/sdk|api\.anthropic\.com|ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN/);
+    }
+  });
+
+  it("AC-1 モックとプラン方式が同じ共通の形（LlmAdapter）を実装し、共通の形が README にある", () => {
+    expect(read("src/server/llm/mock.ts")).toMatch(/class MockAdapter implements LlmAdapter/);
+    expect(read("src/server/llm/plan.ts")).toMatch(/class PlanAdapter implements LlmAdapter/);
+    const readme = read("README.md");
+    for (const w of ["LlmAdapter", "AdapterRequest", "AdapterResponse", "AdapterErrorKind"]) expect(readme).toContain(w);
+  });
+
+  it("AC-17 画面・API（src/app）から LLM の部品を読み込んでいない（利用者向けの AI 機能はまだない）。APIキー方式のアダプタがない", () => {
+    for (const f of srcFiles.filter((x) => rel(x).startsWith("src/app/") || rel(x).startsWith("src/components/"))) {
+      expect(readFileSync(f, "utf8"), rel(f)).not.toMatch(/server\/llm|\.\.\/llm|claude-agent-sdk/);
+    }
+    expect(readdirSync(join(appDir, "src/server/llm")).sort()).toEqual(["config.ts", "eval.ts", "gateway.ts", "index.ts", "memory-store.ts", "mock.ts", "plan.ts", "prompts.ts", "time.ts", "types.ts"]);
+  });
+
+  it("Agent SDK は開発用の依存だけで、公開用の関数に含めない設定がある", () => {
+    const pkg = JSON.parse(read("package.json"));
+    expect(pkg.devDependencies["@anthropic-ai/claude-agent-sdk"]).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(read("next.config.ts")).toMatch(/outputFileTracingExcludes:\s*\{\s*"\*":\s*\["node_modules\/@anthropic-ai\/\*\*"\]/);
+  });
+
+  it("AC-12 プロンプトの置き場と形（README とサンプル。サンプルの先頭に SPEC 番号・目的・版）", () => {
+    expect(existsSync(join(appDir, "prompts/README.md"))).toBe(true);
+    const sample = read("prompts/_sample.md");
+    expect(sample).toMatch(/^---\nspec: SPEC-000b\npurpose: .+\nversion: \d+\n/);
+  });
+
+  it("AC-15 .env.example に LLM の環境変数が説明つきで並び、README に評価コマンドと認証情報の用意の手順がある", () => {
+    const ex = read(".env.example");
+    for (const n of ["LLM_MODE", "LLM_MODEL", "CLAUDE_CODE_OAUTH_TOKEN", "LLM_DAILY_CALL_LIMIT", "LLM_MONTHLY_BUDGET_JPY", "LLM_MAX_OUTPUT_TOKENS", "LLM_PRICE_PRIMARY_INPUT_USD", "LLM_PRICE_PRIMARY_OUTPUT_USD", "LLM_PRICE_ALTERNATE_INPUT_USD", "LLM_PRICE_ALTERNATE_OUTPUT_USD", "LLM_USD_JPY", "LLM_TIMEOUT_MS"]) {
+      expect(ex, n).toMatch(new RegExp(`^${n}=`, "m"));
+    }
+    const readme = read("README.md");
+    expect(readme).toMatch(/npm run eval -- --prompt _sample/);
+    expect(readme).toMatch(/claude setup-token/);
+  });
+
+  it("LLM の部品はログに本文を出さない（console に渡すのは固定の文字列と種類だけ）", () => {
+    for (const f of walk(join(appDir, "src/server/llm"))) {
+      for (const m of readFileSync(f, "utf8").matchAll(/console\.(log|error|warn|info|debug)\(([^)]*)\)/g)) {
+        expect(m[2].replace(/"[^"]*"|'[^']*'/g, '""'), rel(f)).not.toMatch(/input|text|system|prompt\.|req\b|call\b|res\b/);
+      }
+    }
   });
 });

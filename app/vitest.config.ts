@@ -17,6 +17,9 @@ export default defineConfig({
       DB_HOST: "",
       DB_PASSWORD: "",
       SIGNUP_ALLOWED_EMAILS: "",
+      // LLM: 自動テストは認証情報なし（設定にかかわらずモック。SPEC-000b AC-2）
+      CLAUDE_CODE_OAUTH_TOKEN: "",
+      ANTHROPIC_API_KEY: "",
     },
   },
 });

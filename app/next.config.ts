@@ -14,6 +14,8 @@ const nextConfig: NextConfig = {
   // check-build.mjs が開発用の .next を壊さないために出力先を切り替える
   distDir: process.env.NEXT_DIST_DIR || ".next",
   poweredByHeader: false,
+  // Claude Agent SDK（評価コマンド用の開発依存。約250MBの実行ファイルを含む）を、公開用の関数に含めない（SPEC-000b。本番ではプラン方式を使わない）
+  outputFileTracingExcludes: { "*": ["node_modules/@anthropic-ai/**"] },
   reactStrictMode: true,
   async headers() {
     return [

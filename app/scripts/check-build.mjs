@@ -17,6 +17,8 @@ const DUMMY = {
   DB_HOST: "dummy-db-host-zzz444.invalid",
   DB_PASSWORD: "dummy-db-password-zzz555",
   SIGNUP_ALLOWED_EMAILS: "dummy-owner-zzz666@example.invalid",
+  CLAUDE_CODE_OAUTH_TOKEN: "dummy-oauth-token-zzz777",
+  LLM_MODE: "plan",
 };
 let passed = 0;
 const failures = [];
@@ -63,6 +65,8 @@ const needles = [
   "SUPABASE_URL",
   "DATABASE_URL",
   "SIGNUP_ALLOWED_EMAILS",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+  "ANTHROPIC_API_KEY",
   "DB_PASSWORD",
   "service_role",
   "dummypass",
@@ -77,6 +81,9 @@ check(`検査の対象に RSC ペイロード（.rsc）が含まれる（${rscCo
 check(`ブラウザ向け成果物（${browserFiles.length}ファイル）に接続先・キー・環境変数名が含まれない`, hits.length === 0, hits.join(", "));
 const clientJs = walk(join(distDir, "static")).filter((f) => f.endsWith(".js"));
 check("ブラウザ向けJSに認証SDK（supabase）が含まれない", !clientJs.some((f) => /supabase/i.test(readFileSync(f, "utf8"))));
+check("ブラウザ向けJSに LLM の部品（Agent SDK・プロンプト）が含まれない", !clientJs.some((f) => /claude-agent-sdk|ccai-eval|CLAUDE_CODE|LLM_MODE/.test(readFileSync(f, "utf8"))));
+const serverFiles = existsSync(join(distDir, "server")) ? walk(join(distDir, "server")) : [];
+check("公開用のサーバー成果物に Agent SDK の実行ファイルが含まれない", !serverFiles.some((f) => /claude-agent-sdk/.test(f)));
 
 // --- 3. 接続先なしで起動して疎通
 console.log("[check-build] next start（接続先の環境変数なし）...");
